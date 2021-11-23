@@ -2,40 +2,46 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"syscall"
 
 	"github.com/bwmarrin/discordgo"
 )
 
 var (
-	GuildID        = flag.String("guild", "", "Test guild ID. If not passed - bot registers commands globally")
+	GuildID        = flag.String("guild", os.Getenv("GUILDID"), "Test guild ID. If not passed - bot registers commands globally")
 	RemoveCommands = flag.Bool("rmcmd", true, "Remove all commands after shutdowning or not")
+	BotToken       = flag.String("token", os.Getenv("SKINTOKEN"), "Bot access token")
 )
 
-func main() {
-	// Create a new Discord session using the provided bot token.
+var dg *discordgo.Session
 
-	dg, err := discordgo.New("Bot " + os.Getenv("SKINTOKEN"))
+func init() { flag.Parse() }
+
+func init() {
+	var err error
+	dg, err = discordgo.New("Bot " + *BotToken)
 	if err != nil {
-		fmt.Println("error creating Discord session,", err)
-		return
+		log.Fatalf("Invalid bot parameters: %v", err)
 	}
+}
 
-	// Register the messageCreate func as a callback for MessageCreate events.
-	dg.AddHandler(exampleHandler)
+func init() {
+	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if h, ok := commandHandlers[i.ApplicationCommandData().Name]; ok {
+			h(s, i)
+		}
+	})
+}
 
-	// In this example, we only care about receiving message events.
-	dg.Identify.Intents = discordgo.MakeIntent(discordgo.IntentsGuildMessages | discordgo.IntentsGuildMessageReactions)
-
-	// Open a websocket connection to Discord and begin listening.
-	err = dg.Open()
+func main() {
+	dg.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+		log.Println("Bot is up!")
+	})
+	err := dg.Open()
 	if err != nil {
-		fmt.Println("error opening connection,", err)
-		return
+		log.Fatalf("Cannot open the session: %v", err)
 	}
 
 	for _, v := range commands {
@@ -45,12 +51,10 @@ func main() {
 		}
 	}
 
-	// Wait here until CTRL-C or other term signal is received.
-	fmt.Println("Bot is now running.  Press CTRL-C to exit.")
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt, os.Kill)
-	<-sc
+	defer dg.Close()
 
-	// Cleanly close down the Discord session.
-	dg.Close()
+	stop := make(chan os.Signal)
+	signal.Notify(stop, os.Interrupt)
+	<-stop
+	log.Println("Gracefully shutdowning")
 }
